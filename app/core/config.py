@@ -12,43 +12,45 @@ class Settings(BaseSettings):
     )
 
     # ── Main DB ──────────────────────────────────────────────────────────────
-    main_db_host:     str = "localhost"
-    main_db_port:     int = 5432
-    main_db_name:     str = ""
-    main_db_user:     str = ""
-    main_db_password: str = ""
+    MAIN_DB_HOST: str = Field("localhost", alias='MAIN_DB_HOST')
+    MAIN_DB_PORT: int = Field(5432, alias='MAIN_DB_PORT')
+    MAIN_DB_NAME: str = Field(..., alias='MAIN_DB_NAME')
+    MAIN_DB_USER: str = Field(..., alias='MAIN_DB_USER')
+    MAIN_DB_PASSWORD: str = Field(..., alias='MAIN_DB_PASSWORD')
 
-    # ── Default Backup DB ────────────────────────────────────────────────────
-    default_backup_db_host:     str = "localhost"
-    default_backup_db_port:     int = 5432
-    default_backup_db_name:     str = None
-    default_backup_db_user:     str = None
-    default_backup_db_password: str = None
+    #
+    DEFAUTL_BACKUP_DB_HOST: str = Field("localhost", alias='DEFAUTL_BACKUP_DB_HOST')
+    DEFAUTL_BACKUP_DB_PORT: int = Field(5432, alias='DEFAUTL_BACKUP_DB_PORT')
+    DEFAUTL_BACKUP_DB_USER: str = Field(..., alias='DEFAUTL_BACKUP_DB_USER')
+    DEFAUTL_BACKUP_DB_PASSWORD: str = Field(..., alias='DEFAUTL_BACKUP_DB_PASSWORD')
 
     # ── Meta DB (audit trail storage) ────────────────────────────────────────
-    meta_db_host:     str = "localhost"
-    meta_db_port:     int = 5432
-    meta_db_name:     str = ""
-    meta_db_user:     str = ""
-    meta_db_password: str = ""
+    META_DB_HOST: str = Field("localhost", alias='META_DB_HOST')
+    META_DB_PORT: int = Field(5432, alias='META_DB_PORT')
+    META_DB_NAME: str = Field(..., alias='META_DB_NAME')
+    META_DB_USER: str = Field(..., alias='META_DB_USER')
+    META_DB_PASSWORD: str = Field(..., alias='META_DB_PASSWORD')
 
     # ── AWS ──────────────────────────────────────────────────────────────────
-    aws_access_key_id:      str = ""
-    aws_secret_access_key:  str = ""
-    aws_backup_bucket_name: str = ""
-    aws_s3_region_name:     str = "eu-west-1"
+    AWS_ACCESS_KEY_ID: str = Field(..., alias='AWS_ACCESS_KEY_ID')
+    AWS_SECRET_ACCESS_KEY:  str = Field(..., alias='AWS_SECRET_ACCESS_KEY')
+    AWS_BACKUP_BUCKET_NAME: str = Field(..., alias='AWS_BACKUP_BUCKET_NAME')
+    AWS_S3_REGION_NAME: str = Field("eu-west-1", alias='AWS_S3_REGION_NAME')
 
     # ── App ──────────────────────────────────────────────────────────────────
-    app_env:    str = "development"
-    secret_key: str = "change-me"
-    log_level:  str = "INFO"
+    APP_ENV:    str = "development"
+    SECRET_KEY: str = "change-me"
+    LOG_LEVEL:  str = "INFO"
+
+    # ── Media ──────────────────────────────────────────────────────────────────
+    BACKUP_DUMP_DIR: str = Field(..., alias='BACKUP_DUMP_DIR')
 
     # ── Computed DSNs ────────────────────────────────────────────────────────
     @property
     def main_db_dsn(self) -> str:
         return (
-            f"postgresql+asyncpg://{self.main_db_user}:{self.main_db_password}"
-            f"@{self.main_db_host}:{self.main_db_port}/{self.main_db_name}"
+            f"postgresql+asyncpg://{self.MAIN_DB_USER}:{self.MAIN_DB_PASSWORD}"
+            f"@{self.MAIN_DB_HOST}:{self.MAIN_DB_PORT}/{self.MAIN_DB_NAME}"
         )
 
     @property
@@ -61,8 +63,8 @@ class Settings(BaseSettings):
     @property
     def meta_db_dsn(self) -> str:
         return (
-            f"postgresql+asyncpg://{self.meta_db_user}:{self.meta_db_password}"
-            f"@{self.meta_db_host}:{self.meta_db_port}/{self.meta_db_name}"
+            f"postgresql+asyncpg://{self.META_DB_USER}:{self.META_DB_PASSWORD}"
+            f"@{self.META_DB_HOST}:{self.META_DB_PORT}/{self.META_DB_NAME}"
         )
 
     def build_backup_dsn(self, db_name: str) -> str:
@@ -71,8 +73,8 @@ class Settings(BaseSettings):
         Used when the caller passes a custom backup_db_name.
         """
         return (
-            f"postgresql+asyncpg://{self.default_backup_db_user}:{self.default_backup_db_password}"
-            f"@{self.default_backup_db_host}:{self.default_backup_db_port}/{db_name}"
+            f"postgresql+asyncpg://{self.DEFAUTL_BACKUP_DB_USER}:{self.DEFAUTL_BACKUP_DB_PASSWORD}"
+            f"@{self.DEFAUTL_BACKUP_DB_HOST}:{self.DEFAUTL_BACKUP_DB_PORT}/{db_name}"
         )
 
 

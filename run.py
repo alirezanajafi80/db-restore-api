@@ -8,7 +8,7 @@ if __name__ == "__main__":
         "app.main:app",
         host    = "0.0.0.0",
         port    = 8000,
-        reload  = settings.app_env == "development",
-        workers = 1 if settings.app_env == "development" else 4,
-        log_level = settings.log_level.lower(),
+        reload  =settings.APP_ENV == "development",
+        workers = 1 if settings.APP_ENV == "development" else 4,
+        log_level = settings.LOG_LEVEL.lower(),
     )

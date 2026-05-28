@@ -43,7 +43,7 @@ def _now_tag() -> str:
 
 def _dump_dir() -> Path:
     """Return (and create) the directory where .dump files are stored."""
-    path = Path(os.getenv("BACKUP_DUMP_DIR", "/backups"))
+    path = Path(settings.BACKUP_DUMP_DIR)
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -54,7 +54,7 @@ def _pg_main_env() -> dict:
     Using PGPASSWORD avoids interactive password prompts.
     """
     env = os.environ.copy()
-    env["PGPASSWORD"] = settings.main_db_password
+    env["PGPASSWORD"] = settings.MAIN_DB_PASSWORD
     return env
 
 
@@ -75,11 +75,11 @@ async def _create_backup_database(db_name: str) -> None:
     """
     # Connect to the 'postgres' maintenance database on the backup host
     conn = await asyncpg.connect(
-        host     = settings.default_backup_db_host,
-        port     = settings.default_backup_db_port,
-        user     = settings.default_backup_db_user,
-        password = settings.default_backup_db_password,
-        database = "postgres",          # maintenance DB — always exists
+        host=settings.DEFAUTL_BACKUP_DB_HOST,
+        port=settings.DEFAUTL_BACKUP_DB_PORT,
+        user=settings.DEFAUTL_BACKUP_DB_USER,
+        password=settings.DEFAUTL_BACKUP_DB_PASSWORD,
+        database= "postgres",          # maintenance DB — always exists
     )
     try:
         # Check if it already exists (idempotent)
@@ -105,14 +105,14 @@ def _run_pg_dump(dump_path: Path) -> None:
     """
     cmd = [
         "pg_dump",
-        "--format=custom",      # compressed, supports pg_restore selective restore
+        "--format=custom", # compressed, supports pg_restore selective restore
         "--no-acl",
         "--no-owner",
-        "--host",     settings.main_db_host,
-        "--port",     str(settings.main_db_port),
-        "--username", settings.main_db_user,
-        "--dbname",   settings.main_db_name,
-        "--file",     str(dump_path),
+        "--host", settings.MAIN_DB_HOST,
+        "--port", str(settings.MAIN_DB_PORT),
+        "--username", settings.MAIN_DB_USER,
+        "--dbname", settings.MAIN_DB_NAME,
+        "--file", str(dump_path),
     ]
     result = subprocess.run(cmd, capture_output=True, env=_pg_main_env())
     if result.returncode != 0:
@@ -134,10 +134,10 @@ def _run_pg_restore(dump_path: Path, target_db: str) -> None:
         "pg_restore",
         "--no-acl",
         "--no-owner",
-        "--host",     settings.default_backup_db_host,
-        "--port",     str(settings.default_backup_db_port),
+        "--host", settings.default_backup_db_host,
+        "--port", str(settings.default_backup_db_port),
         "--username", settings.default_backup_db_user,
-        "--dbname",   target_db,
+        "--dbname", target_db,
         "--verbose",
         str(dump_path),
     ]
@@ -164,26 +164,26 @@ def _run_pg_restore(dump_path: Path, target_db: str) -> None:
 
 async def _save_backup_log(
     meta_session: AsyncSession,
-    db_name:      str,
-    dump_path:    Path,
-    status:       str,
-    error:        str = "",
-    notes:        str = "",
-    created_by:   str | None = None,
+    db_name: str,
+    dump_path: Path,
+    status: str,
+    error: str = "",
+    notes: str = "",
+    created_by: str | None = None,
 ) -> BackupLog:
     size_bytes = dump_path.stat().st_size if dump_path.exists() else None
 
     log = BackupLog(
-        filename       = dump_path.name,
-        local_path     = str(dump_path),
-        size_bytes     = size_bytes,
-        storage        = "local",
-        status         = status,
-        error_message  = error or None,
-        notes          = notes,
-        backup_db_name = db_name,
-        created_by     = created_by,
-        completed_at   = datetime.now(tz=timezone.utc) if status == "completed" else None,
+        filename=dump_path.name,
+        local_path=str(dump_path),
+        size_bytes=size_bytes,
+        storage="local",
+        status=status,
+        error_message=error or None,
+        notes=notes,
+        backup_db_name=db_name,
+        created_by=created_by,
+        completed_at=datetime.now(tz=timezone.utc) if status == "completed" else None,
     )
     meta_session.add(log)
     await meta_session.commit()
@@ -195,8 +195,8 @@ async def _save_backup_log(
 
 async def create_backup(
     meta_session: AsyncSession,
-    notes:        str = "",
-    created_by:   str | None = None,
+    notes: str = "",
+    created_by: str | None = None,
 ) -> BackupLog:
     """
     Full backup workflow (called from the API router):
@@ -210,8 +210,8 @@ async def create_backup(
 
     Raises on critical failure after writing a 'failed' BackupLog.
     """
-    tag      = _now_tag()
-    db_name  = f"backup_db_{tag}"
+    tag = _now_tag()
+    db_name = f"backup_db_{tag}"
     filename = f"{db_name}.dump"
     dump_path = _dump_dir() / filename
 

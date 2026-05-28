@@ -15,7 +15,7 @@ SQLAlchemy engines on every request.
 """
 
 import logging
-# from functools import lru_cache
+from functools import lru_cache
 from typing import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import (
@@ -24,8 +24,8 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
-
 from .config import get_settings
+
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -33,7 +33,7 @@ settings = get_settings()
 
 # ── Engine factory (cached by DSN) ───────────────────────────────────────────
 
-# @lru_cache(maxsize=32)
+@lru_cache(maxsize=32)
 def _get_engine(dsn: str, pool_size: int = 5) -> AsyncEngine:
     """Create (or return cached) async engine for a given DSN."""
     logger.info("Creating engine for DSN: %s", dsn.split("@")[-1])   # hide password
@@ -42,7 +42,7 @@ def _get_engine(dsn: str, pool_size: int = 5) -> AsyncEngine:
         pool_size=pool_size,
         max_overflow=10,
         pool_pre_ping=True,
-        echo=settings.app_env == "development",
+        echo=settings.APP_ENV == "development",
     )
 
 

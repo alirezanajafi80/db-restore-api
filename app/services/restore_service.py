@@ -21,8 +21,8 @@ from datetime import datetime, timezone
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models.meta_models import BackupLog, RevertLog
-from ..models.schemas import (
+from app.models.meta_models import BackupLog, RevertLog
+from app.commen.restore.schema.restore_schema import (
     DetectMissingResponse,
     MissingRecord,
     OrderedRestoreResponse,
@@ -36,11 +36,11 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class _TableResult:
-    table:        str
-    missing_ids:  list[int] = field(default_factory=list)
+    table: str
+    missing_ids: list[int] = field(default_factory=list)
     restored_ids: list[int] = field(default_factory=list)
-    failed_ids:   list[int] = field(default_factory=list)
-    errors:       dict[str, str] = field(default_factory=dict)
+    failed_ids: list[int] = field(default_factory=list)
+    errors: dict[str, str] = field(default_factory=dict)
 
 
 # ── Low-level DB helpers ──────────────────────────────────────────────────────
@@ -89,10 +89,10 @@ async def _get_columns(session: AsyncSession, table: str) -> list[str]:
 
 
 async def _upsert_row(
-    session: AsyncSession,
-    table: str,
-    row: dict,
-    columns: list[str],
+        session: AsyncSession,
+        table: str,
+        row: dict,
+        columns: list[str],
 ) -> None:
     """
     INSERT the row into main DB.
@@ -103,8 +103,8 @@ async def _upsert_row(
     safe_row = {k: v for k, v in row.items() if k in columns}
     cols = list(safe_row.keys())
 
-    col_list    = ", ".join(f'"{c}"' for c in cols)
-    param_list  = ", ".join(f":{c}" for c in cols)
+    col_list = ", ".join(f'"{c}"' for c in cols)
+    param_list = ", ".join(f":{c}" for c in cols)
     update_list = ", ".join(f'"{c}" = EXCLUDED."{c}"' for c in cols if c != "id")
 
     sql = (
@@ -117,8 +117,8 @@ async def _upsert_row(
 # ── Backup log resolution ─────────────────────────────────────────────────────
 
 async def _resolve_backup_log(
-    meta_session: AsyncSession,
-    backup_log_id: int | None,
+        meta_session: AsyncSession,
+        backup_log_id: int | None,
 ) -> BackupLog | None:
     """Return the requested BackupLog, or the latest completed one."""
     from sqlalchemy import select
@@ -144,15 +144,15 @@ async def _resolve_backup_log(
 # ── Main service: ordered restore ─────────────────────────────────────────────
 
 async def ordered_restore(
-    tables:          list[str],
-    main_session:    AsyncSession,
-    backup_session:  AsyncSession,
-    meta_session:    AsyncSession,
-    backup_db_name:  str,
-    backup_log_id:   int | None = None,
-    notes:           str = "",
-    performed_by:    str | None = None,
-    dry_run:         bool = False,
+        tables: list[str],
+        main_session: AsyncSession,
+        backup_session: AsyncSession,
+        meta_session: AsyncSession,
+        backup_db_name: str,
+        backup_log_id: int | None = None,
+        notes: str = "",
+        performed_by: str | None = None,
+        dry_run: bool = False,
 ) -> OrderedRestoreResponse:
     """
     For each table (IN ORDER):
@@ -168,50 +168,50 @@ async def ordered_restore(
 
     for table in tables:
         result = await _process_table(
-            table         = table,
-            main_session  = main_session,
-            backup_session= backup_session,
-            meta_session  = meta_session,
-            backup_log    = backup_log,
-            notes         = notes,
-            performed_by  = performed_by,
-            dry_run       = dry_run,
+            table=table,
+            main_session=main_session,
+            backup_session=backup_session,
+            meta_session=meta_session,
+            backup_log=backup_log,
+            notes=notes,
+            performed_by=performed_by,
+            dry_run=dry_run,
         )
         results.append(result)
 
-    total_missing  = sum(len(r.missing_ids)  for r in results)
+    total_missing = sum(len(r.missing_ids) for r in results)
     total_restored = sum(len(r.restored_ids) for r in results)
-    total_failed   = sum(len(r.failed_ids)   for r in results)
+    total_failed = sum(len(r.failed_ids) for r in results)
 
     return OrderedRestoreResponse(
-        backup_db_used   = backup_db_name,
-        backup_log_id    = backup_log.id if backup_log else None,
-        dry_run          = dry_run,
-        tables_processed = [
+        backup_db_used=backup_db_name,
+        backup_log_id=backup_log.id if backup_log else None,
+        dry_run=dry_run,
+        tables_processed=[
             TableRestoreResult(
-                table        = r.table,
-                missing_ids  = r.missing_ids,
-                restored_ids = r.restored_ids,
-                failed_ids   = r.failed_ids,
-                errors       = r.errors,
+                table=r.table,
+                missing_ids=r.missing_ids,
+                restored_ids=r.restored_ids,
+                failed_ids=r.failed_ids,
+                errors=r.errors,
             )
             for r in results
         ],
-        total_missing  = total_missing,
-        total_restored = total_restored,
-        total_failed   = total_failed,
+        total_missing=total_missing,
+        total_restored=total_restored,
+        total_failed=total_failed,
     )
 
 
 async def _process_table(
-    table:          str,
-    main_session:   AsyncSession,
-    backup_session: AsyncSession,
-    meta_session:   AsyncSession,
-    backup_log:     BackupLog | None,
-    notes:          str,
-    performed_by:   str | None,
-    dry_run:        bool,
+        table: str,
+        main_session: AsyncSession,
+        backup_session: AsyncSession,
+        meta_session: AsyncSession,
+        backup_log: BackupLog | None,
+        notes: str,
+        performed_by: str | None,
+        dry_run: bool,
 ) -> _TableResult:
     result = _TableResult(table=table)
 
@@ -230,8 +230,8 @@ async def _process_table(
 
     # ── Find missing IDs ────────────────────────────────────────────────────
     backup_ids = await _get_all_ids(backup_session, table)
-    main_ids   = await _get_all_ids(main_session, table)
-    missing    = sorted(backup_ids - main_ids)
+    main_ids = await _get_all_ids(main_session, table)
+    missing = sorted(backup_ids - main_ids)
     result.missing_ids = missing
 
     logger.info(
@@ -257,18 +257,18 @@ async def _process_table(
 
         try:
             await _upsert_row(main_session, table, row, columns)
-            await main_session.flush()   # send to DB but keep in transaction
+            await main_session.flush()  # send to DB but keep in transaction
 
             # audit trail
             await _write_revert_log(
-                meta_session = meta_session,
-                backup_log   = backup_log,
-                table        = table,
-                pk           = pk,
-                row          = row,
-                performed_by = performed_by,
-                notes        = notes,
-                success      = True,
+                meta_session=meta_session,
+                backup_log=backup_log,
+                table=table,
+                pk=pk,
+                row=row,
+                performed_by=performed_by,
+                notes=notes,
+                success=True,
             )
 
             result.restored_ids.append(pk)
@@ -281,15 +281,15 @@ async def _process_table(
             logger.error("  ✗ Failed %s #%d: %s", table, pk, error_msg)
 
             await _write_revert_log(
-                meta_session = meta_session,
-                backup_log   = backup_log,
-                table        = table,
-                pk           = pk,
-                row          = row,
-                performed_by = performed_by,
-                notes        = notes,
-                success      = False,
-                error        = error_msg,
+                meta_session=meta_session,
+                backup_log=backup_log,
+                table=table,
+                pk=pk,
+                row=row,
+                performed_by=performed_by,
+                notes=notes,
+                success=False,
+                error=error_msg,
             )
 
     # Commit all restored rows for this table atomically
@@ -301,28 +301,28 @@ async def _process_table(
 
 
 async def _write_revert_log(
-    meta_session: AsyncSession,
-    backup_log:   BackupLog | None,
-    table:        str,
-    pk:           int,
-    row:          dict,
-    performed_by: str | None,
-    notes:        str,
-    success:      bool,
-    error:        str = "",
+        meta_session: AsyncSession,
+        backup_log: BackupLog | None,
+        table: str,
+        pk: int,
+        row: dict,
+        performed_by: str | None,
+        notes: str,
+        success: bool,
+        error: str = "",
 ) -> None:
     """Best-effort audit write — never raises."""
     try:
         log = RevertLog(
-            backup_log_id = backup_log.id if backup_log else None,
-            table_name    = table,
-            object_id     = pk,
-            reverted_by   = performed_by,
-            reverted_at   = datetime.now(tz=timezone.utc),
-            success       = success,
-            error_message = error or None,
-            notes         = notes,
-            restored_data = _serialize_row(row),
+            backup_log_id=backup_log.id if backup_log else None,
+            table_name=table,
+            object_id=pk,
+            reverted_by=performed_by,
+            reverted_at=datetime.now(tz=timezone.utc),
+            success=success,
+            error_message=error or None,
+            notes=notes,
+            restored_data=_serialize_row(row),
         )
         meta_session.add(log)
         await meta_session.flush()
@@ -344,13 +344,13 @@ def _serialize_row(row: dict) -> dict:
 # ── Detect missing (read-only) ────────────────────────────────────────────────
 
 async def detect_missing(
-    tables:         list[str],
-    main_session:   AsyncSession,
-    backup_session: AsyncSession,
-    meta_session:   AsyncSession,
-    backup_db_name: str = f'backup_db_{datetime.now().date()}',
-    backup_db_user: str = '',
-    backup_log_id:  int | None = None,
+        tables: list[str],
+        main_session: AsyncSession,
+        backup_session: AsyncSession,
+        meta_session: AsyncSession,
+        backup_db_name: str = f'backup_db_{datetime.now().date()}',
+        backup_db_user: str = '',
+        backup_log_id: int | None = None,
 ) -> DetectMissingResponse:
     """
     Read-only scan: find records in backup but missing in main.
@@ -368,23 +368,23 @@ async def detect_missing(
             continue
 
         backup_ids = await _get_all_ids(backup_session, table)
-        main_ids   = await _get_all_ids(main_session, table)
-        missing    = sorted(backup_ids - main_ids)
+        main_ids = await _get_all_ids(main_session, table)
+        missing = sorted(backup_ids - main_ids)
 
         for pk in missing:
             row = await _fetch_row(backup_session, table, pk)
             if row:
                 missing_records.append(
                     MissingRecord(
-                        table     = table,
-                        object_id = pk,
-                        data      = _serialize_row(row),
+                        table=table,
+                        object_id=pk,
+                        data=_serialize_row(row),
                     )
                 )
 
     return DetectMissingResponse(
-        backup_db_used = backup_db_name,
-        backup_log_id  = backup_log.id if backup_log else None,
-        missing        = missing_records,
-        total_missing  = len(missing_records),
+        backup_db_used=backup_db_name,
+        backup_log_id=backup_log.id if backup_log else None,
+        missing=missing_records,
+        total_missing=len(missing_records),
     )

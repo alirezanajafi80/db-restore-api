@@ -4,12 +4,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_meta_db
 from app.models.meta_models import BackupLog, RevertLog
-from app.models.schemas import BackupLogSchema, OkResponse, RevertLogSchema
+from app.commen.restore.schema.restore_schema import BackupLogSchema, OkResponse, RevertLogSchema
 
 router = APIRouter(prefix="/backups", tags=["Backup Logs"])
 
-
-# ── Backup Logs ───────────────────────────────────────────────────────────────
 
 @router.get(
     "/",
@@ -17,7 +15,7 @@ router = APIRouter(prefix="/backups", tags=["Backup Logs"])
     summary="List all backup log entries",
 )
 async def list_backups(
-    meta: AsyncSession = Depends(get_meta_db),
+        meta: AsyncSession = Depends(get_meta_db),
 ) -> list[BackupLogSchema]:
     result = await meta.execute(
         select(BackupLog).order_by(BackupLog.created_at.desc())
@@ -32,8 +30,8 @@ async def list_backups(
     summary="Get a single backup log entry",
 )
 async def get_backup(
-    backup_id: int,
-    meta: AsyncSession = Depends(get_meta_db),
+        backup_id: int,
+        meta: AsyncSession = Depends(get_meta_db),
 ) -> BackupLogSchema:
     log = await meta.get(BackupLog, backup_id)
     if not log:
@@ -47,8 +45,8 @@ async def get_backup(
     summary="Delete a backup log entry and its audit records",
 )
 async def delete_backup_log(
-    backup_id: int,
-    meta: AsyncSession = Depends(get_meta_db),
+        backup_id: int,
+        meta: AsyncSession = Depends(get_meta_db),
 ) -> OkResponse:
     log = await meta.get(BackupLog, backup_id)
     if not log:
@@ -58,15 +56,13 @@ async def delete_backup_log(
     return OkResponse(detail=f"BackupLog #{backup_id} deleted.")
 
 
-# ── Revert Logs ───────────────────────────────────────────────────────────────
-
 @router.get(
     "/revert-logs/all",
     response_model=list[RevertLogSchema],
     summary="List all revert (restore) audit entries",
 )
 async def list_revert_logs(
-    meta: AsyncSession = Depends(get_meta_db),
+        meta: AsyncSession = Depends(get_meta_db),
 ) -> list[RevertLogSchema]:
     result = await meta.execute(
         select(RevertLog).order_by(RevertLog.reverted_at.desc())
@@ -81,8 +77,8 @@ async def list_revert_logs(
     summary="List revert logs for a specific backup",
 )
 async def list_revert_logs_for_backup(
-    backup_id: int,
-    meta: AsyncSession = Depends(get_meta_db),
+        backup_id: int,
+        meta: AsyncSession = Depends(get_meta_db),
 ) -> list[RevertLogSchema]:
     result = await meta.execute(
         select(RevertLog)
