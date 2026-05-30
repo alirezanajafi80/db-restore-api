@@ -3,22 +3,22 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import backups, health, restore
-from app.core.config import get_settings
-from app.core.database import get_meta_engine
-from app.models.meta_models import Base
-from app.api import backup_create
+from src.commen.settings import get_settings
+from src.database import get_meta_engine
+from src.models.meta_models import Base
+from src.module.gateway.backup import backup_controller
+from src.module.gateway.restore import restore_controller
+from src.module.gateway.health import health_controller
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from src.commen.schedulers import scheduler
 
 settings = get_settings()
 
 logging.basicConfig(
-    # level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO),
-    level=logging.DEBUG,
+    level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO),
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
@@ -34,13 +34,21 @@ async def lifespan(app: FastAPI):
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Meta DB tables ready.")
     yield
+
+    scheduler.start()
+    print("Scheduler started!!!")
+    yield
+
+    scheduler.shutdown()
+    print("Scheduler shutdown")
+
     # Shutdown: nothing special needed (connection pools close automatically)
     logger.info("LMS Restore API shutting down.")
 
 
 app = FastAPI(
-    title = "Backup Restore API",
-    description = """
+    title="Backup Restore API",
+    description="""
     ## Overview
 
     Async FastAPI service for restoring deleted records from a PostgreSQL backup database
@@ -53,18 +61,11 @@ app = FastAPI(
     | **Main DB** | The live production database |
     | **Backup DB** | A backup PostgreSQL instance (name passed per-request or default from settings) |
     | **Meta DB** | Internal DB storing `BackupLog` and `RevertLog` audit trail |
-    | **Ordered restore** | Restores FK parents before children to avoid constraint errors |
-    
-    ## Typical workflow
-    
-    1. `POST /restore/detect-missing` — preview what would be restored (safe, read-only)
-    2. `POST /restore/ordered` — actually restore the missing records
-    3. `GET /backups/revert-logs/all` — review the audit trail
     """,
-    version     = "1.0.0",
-    docs_url    = "/docs",
-    redoc_url   = "/redoc",
-    lifespan    = lifespan,
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 
@@ -96,19 +97,16 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     )
 
 
-
 # ── CORS ──────────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins     = ["*"],   # tighten in production
-    allow_credentials = True,
-    allow_methods     = ["*"],
-    allow_headers     = ["*"],
+    allow_origins=["*"],  # tighten in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # ── Routers ───────────────────────────────────────────────────────────────
-app.include_router(health.router)
-app.include_router(restore.router)
-app.include_router(backups.router)
-app.include_router(backup_create.router)
-
+app.include_router(health_controller.router)
+app.include_router(restore_controller.router)
+app.include_router(backup_controller.router)

@@ -53,6 +53,7 @@ class BackupLog(Base):
     revert_logs: Mapped[list["RevertLog"]] = relationship("RevertLog",
                                                           back_populates="backup_log",
                                                           cascade="all, delete-orphan")
+    db_dropped: Mapped[bool] = mapped_column(Boolean, default=False)
 
     @property
     def size_mb(self) -> float | None:

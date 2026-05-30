@@ -1,18 +1,18 @@
 import logging
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.core.database import get_backup_db, get_main_db, get_meta_db, get_backup_engine
-from app.core.config import get_settings
-from app.commen.restore.schema.restore_schema import (
+from src.database import get_main_db, get_meta_db, get_backup_engine
+from src.commen.settings import get_settings
+from src.commen.restore.schema.restore_schema import (
     DetectMissingRequest,
     DetectMissingResponse,
     OrderedRestoreRequest,
     OrderedRestoreResponse,
 )
-from app.services.restore_service import detect_missing, ordered_restore
+from src.module.restore.restore_service import RestoreService
+
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/restore", tags=["Restore"])
@@ -26,7 +26,7 @@ settings = get_settings()
     description="""
         Finds records that exist in the **backup DB** but are **missing** from the **main DB**,
         then restores them **in the order you specify** (so FK parents are created before children).
-        
+
         ### How it works
         1. For each table in `tables` (processed in order):
            - Collects all IDs from the backup DB for that table
@@ -35,7 +35,7 @@ settings = get_settings()
         2. Fetches the full row from the backup DB for each missing ID
         3. Upserts it into the main DB (`INSERT … ON CONFLICT (id) DO UPDATE`)
         4. Writes an audit entry to the RevertLog
-        
+
         ### Example — StudentVoucher with FK dependencies
         ```json
         {
@@ -44,7 +44,7 @@ settings = get_settings()
           "notes": "Restoring accidentally deleted records"
         }
         ```
-        
+
         > ⚠️ **Order matters**: always list FK parents before children.
     """,
     status_code=status.HTTP_200_OK,
@@ -54,7 +54,7 @@ async def ordered_restore_endpoint(
         main_session: AsyncSession = Depends(get_main_db),
         meta_session: AsyncSession = Depends(get_meta_db),
 ) -> OrderedRestoreResponse:
-    # Build the backup DSN / session inline so we use body.backup_db_name
+    # Build the backup DSN / meta_session inline so we use body.backup_db_name
     backup_db_name = body.backup_db_name
     engine = get_backup_engine(backup_db_name)
 
@@ -63,7 +63,7 @@ async def ordered_restore_endpoint(
 
     try:
         async with factory() as backup_session:
-            result = await ordered_restore(
+            result = await RestoreService().ordered_restore(
                 tables=body.tables,
                 main_session=main_session,
                 backup_session=backup_session,
@@ -91,7 +91,7 @@ async def ordered_restore_endpoint(
     description="""
         **Safe, read-only** endpoint. Scans the backup DB and returns all records
         that are missing from the main DB — including the **full row data** as preview.
-        
+
         Use this before `/restore/ordered` to see exactly what would be restored.
     """,
     status_code=status.HTTP_200_OK,
@@ -108,7 +108,7 @@ async def detect_missing_endpoint(
 
     try:
         async with factory() as backup_session:
-            result = await detect_missing(
+            result = await RestoreService().detect_missing(
                 tables=body.tables,
                 main_session=main_session,
                 backup_session=backup_session,

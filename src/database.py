@@ -1,10 +1,10 @@
 """
-app/core/database.py
+src/core/database.py
 
 Manages THREE async database connections:
   1. main_db   — the live production database (read + write)
   2. backup_db — the backup database (read only; dynamic per request)
-  3. meta_db   — stores BackupLog / RevertLog audit trail for this app
+  3. meta_db   — stores BackupLog / RevertLog audit trail for this src
 
 The backup engine is created DYNAMICALLY per request based on:
   - backup_db_name param  →  same host as default backup but different DB
@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
-from .config import get_settings
+from src.commen.settings import get_settings
 
 
 logger = logging.getLogger(__name__)
@@ -32,7 +32,6 @@ settings = get_settings()
 
 
 # ── Engine factory (cached by DSN) ───────────────────────────────────────────
-
 @lru_cache(maxsize=32)
 def _get_engine(dsn: str, pool_size: int = 5) -> AsyncEngine:
     """Create (or return cached) async engine for a given DSN."""
@@ -81,7 +80,7 @@ def _make_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSessio
     )
 
 
-# Fixed session factories for main + meta
+# Fixed meta_session factories for main + meta
 MainSessionFactory = _make_session_factory(get_main_engine())
 MetaSessionFactory = _make_session_factory(get_meta_engine())
 
@@ -124,7 +123,7 @@ async def get_backup_db(
 # ── Startup / shutdown ────────────────────────────────────────────────────────
 
 async def dispose_all_engines() -> None:
-    """Call on app shutdown to cleanly close all connection pools."""
+    """Call on src shutdown to cleanly close all connection pools."""
     for engine in _get_engine.cache_info() and []:   # type: ignore[attr-defined]
         await engine.dispose()
 

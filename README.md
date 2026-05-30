@@ -1,49 +1,39 @@
-# LMS Backup Restore API
+# Restore DB API
 
-Async **FastAPI** service with two responsibilities:
+Async **FastAPI** service with three responsibilities:
 
 1. **Take a full backup** of the main PostgreSQL database on demand (via API call)
 2. **Restore deleted records** from a backup database back into main — in FK-dependency order
-
----
-
-## Table of contents
-
-- [Project structure](#project-structure)
-- [Requirements](#requirements)
-- [Installation](#installation)
-- [Environment variables](#environment-variables)
-- [Database setup](#database-setup)
-- [Running the server](#running-the-server)
-- [API reference](#api-reference)
-- [FK ordering guide](#fk-ordering-guide)
-- [Typical workflows](#typical-workflows)
+3. **Delete a backup** — drops the backup database and removes the dump file from disk
 
 ---
 
 ## Project structure
 
 ```
-lms_restore_api/
-├── app/
-│   ├── main.py                      # FastAPI app factory + lifespan
-│   ├── core/
-│   │   ├── config.py                # Settings loaded from .env
-│   │   └── database.py              # Async engine factory (main / backup / meta)
-│   ├── models/
-│   │   ├── meta_models.py           # SQLAlchemy ORM: BackupLog, RevertLog
-│   │   └── schemas.py               # Pydantic v2 request / response schemas
-│   ├── services/
-│   │   ├── backup_service.py        # pg_dump + pg_restore logic
-│   │   └── restore_service.py       # Ordered restore logic (raw async SQL)
-│   └── api/
-│       ├── backup_create.py         # POST /backup/create
-│       ├── backups.py               # GET/DELETE /backups/  audit trail
-│       ├── restore.py               # POST /restore/ordered  /restore/detect-missing
-│       └── health.py                # GET /health
-├── run.py                           # uvicorn entrypoint
+db-restore-api/
+├── .venv/                               virtual environment (not committed)
+├── src/
+│   ├── commen/
+│   │   ├── backup/
+│   │   │   └── schema/                  Pydantic schemas for backup requests/responses
+│   │   ├── restore/
+│   │   │   └── schema/                  Pydantic schemas for restore requests/responses
+│   │   └── utils/                       shared utilities
+│   ├── models/                          SQLAlchemy ORM models (BackupLog, RevertLog)
+│   └── module/
+│       ├── backup/                      backup business logic service
+│       ├── restore/                     restore business logic service
+│       └── gateway/
+│           ├── backup/                  POST /backup/create  POST /backup/delete/{id}
+│           ├── restore/                 POST /restore/ordered  POST /restore/detect-missing
+│           └── health/                  GET /health
+├── .env                                 environment variables (not committed)
+├── .env.example                         environment variable template
+├── .gitignore
 ├── requirements.txt
-└── .env.example
+├── run.py                               uvicorn entrypoint
+└── README.md
 ```
 
 ---
@@ -52,114 +42,46 @@ lms_restore_api/
 
 ### Python
 
-- Python **3.11** or **3.12**
+Python **3.11** or **3.12**
 
 ### System packages
 
-`pg_dump` and `pg_restore` must be available on the machine running this app:
+`pg_dump` and `pg_restore` must be installed on the machine running this app:
 
 ```bash
 # Ubuntu / Debian
 sudo apt update && sudo apt install -y postgresql-client
 
-# Verify
+# verify
 pg_dump --version
 pg_restore --version
 ```
 
 ### PostgreSQL databases
 
-You need **three** PostgreSQL databases:
+Three PostgreSQL databases are needed:
 
 | Database | Purpose |
 |----------|---------|
-| **Main DB** | Your live LMS production database (read + write) |
-| **Backup DB host** | PostgreSQL server where backup DBs are created (one per backup) |
-| **Meta DB** | Stores `BackupLog` and `RevertLog` audit records for this app |
-
-The Meta DB can be the same server as Main — just a different database name.
+| **Main DB** | Live LMS production database (read + write) |
+| **Backup DB host** | PostgreSQL server where backup DBs are created — one new DB per backup named `backup_db_YYYYMMDD_HHMMSS` |
+| **Meta DB** | Stores `BackupLog` and `RevertLog` audit records — can share the same server as Main |
 
 ---
 
 ## Installation
 
 ```bash
-# 1. Clone / copy the project
-cd lms_restore_api
-
-# 2. Create virtual environment
+# 1. create virtual environment
 python -m venv .venv
-source .venv/bin/activate          # Linux / macOS
-# .venv\Scripts\activate           # Windows
+source .venv/bin/activate        # Linux / macOS
+# .venv\Scripts\activate         # Windows
 
-# 3. Install dependencies
+# 2. install dependencies
 pip install -r requirements.txt
 
-# 4. Copy and fill in the env file
+# 3. copy and fill in env file
 cp .env.example .env
-nano .env                          # or your preferred editor
-```
-
----
-
-## Environment variables
-
-Copy `.env.example` to `.env` and fill in every value.
-
-```env
-# ─────────────────────────────────────────────────────────────────────────────
-# MAIN DATABASE  (your live LMS production database)
-# ─────────────────────────────────────────────────────────────────────────────
-MAIN_DB_HOST=localhost
-MAIN_DB_PORT=5432
-MAIN_DB_NAME=lms_main
-MAIN_DB_USER=lms_user
-MAIN_DB_PASSWORD=your_main_password
-
-# ─────────────────────────────────────────────────────────────────────────────
-# BACKUP DATABASE HOST
-# The host / credentials used when creating new backup databases.
-# Each backup creates a new DB named  backup_db_YYYYMMDD_HHMMSS  on this host.
-# DEFAULT_BACKUP_DB_NAME is only used as fallback when no backup_db_name
-# is passed to the restore API.
-# ─────────────────────────────────────────────────────────────────────────────
-DEFAULT_BACKUP_DB_HOST=localhost
-DEFAULT_BACKUP_DB_PORT=5432
-DEFAULT_BACKUP_DB_NAME=lms_backup
-DEFAULT_BACKUP_DB_USER=lms_user
-DEFAULT_BACKUP_DB_PASSWORD=your_backup_password
-
-# ─────────────────────────────────────────────────────────────────────────────
-# META DATABASE  (stores BackupLog + RevertLog audit trail)
-# Can be the same server as Main — just use a different DB name.
-# ─────────────────────────────────────────────────────────────────────────────
-META_DB_HOST=localhost
-META_DB_PORT=5432
-META_DB_NAME=lms_restore_meta
-META_DB_USER=lms_user
-META_DB_PASSWORD=your_meta_password
-
-# ─────────────────────────────────────────────────────────────────────────────
-# BACKUP DUMP DIRECTORY
-# Absolute path where .dump files are saved during backup.
-# Must be writable by the user running this app.
-# ─────────────────────────────────────────────────────────────────────────────
-BACKUP_DUMP_DIR=/backups
-
-# ─────────────────────────────────────────────────────────────────────────────
-# APP SETTINGS
-# ─────────────────────────────────────────────────────────────────────────────
-APP_ENV=production          # development | production
-LOG_LEVEL=INFO              # DEBUG | INFO | WARNING | ERROR
-SECRET_KEY=change-me-in-production
-
-# ─────────────────────────────────────────────────────────────────────────────
-# AWS S3  (optional — only needed if you plan to upload dumps to S3)
-# ─────────────────────────────────────────────────────────────────────────────
-AWS_ACCESS_KEY_ID=
-AWS_SECRET_ACCESS_KEY=
-AWS_BACKUP_BUCKET_NAME=
-AWS_S3_REGION_NAME=eu-west-1
 ```
 
 ---
@@ -169,23 +91,20 @@ AWS_S3_REGION_NAME=eu-west-1
 ### 1. Create the Meta database
 
 ```sql
--- Connect to PostgreSQL as a superuser and run:
-CREATE DATABASE lms_restore_meta;
-GRANT ALL PRIVILEGES ON DATABASE lms_restore_meta TO lms_user;
+CREATE DATABASE restore_meta;
+GRANT ALL PRIVILEGES ON DATABASE restore_meta TO meta_user;
 ```
 
-The app creates all required tables automatically on first startup — no migration needed.
+Tables are created automatically on first startup — no migration needed.
 
-### 2. Create the Backup database host / user
-
-The backup user needs permission to **create databases** on the backup host:
+### 2. Allow the backup user to create databases
 
 ```sql
--- On the backup PostgreSQL server:
-ALTER USER lms_user CREATEDB;
+-- run on the backup PostgreSQL server
+ALTER USER meta_user CREATEDB;
 ```
 
-### 3. Dump directory
+### 3. Create the dump directory
 
 ```bash
 sudo mkdir -p /backups
@@ -194,42 +113,26 @@ sudo chown $USER:$USER /backups
 
 ---
 
-## Running the server
-
-### Development (with auto-reload)
-
-```bash
-source .venv/bin/activate
-APP_ENV=development python run.py
-```
-
 ### Production
 
 ```bash
-source .venv/bin/activate
-python run.py
+uvicorn src.main:app --host 0.0.0.0 --port 8000 --workers 4
 ```
 
-Or directly with uvicorn:
+### As a systemd service (recommended)
 
-```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
-```
-
-### As a systemd service (recommended for production)
-
-Create `/etc/systemd/system/lms-restore.service`:
+Create `/etc/systemd/system/db-restore.service`:
 
 ```ini
 [Unit]
-Description=LMS Backup Restore API
+Description=Restore DB API
 After=network.target
 
 [Service]
 User=ubuntu
-WorkingDirectory=/opt/lms_restore_api
-EnvironmentFile=/opt/lms_restore_api/.env
-ExecStart=/opt/lms_restore_api/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+WorkingDirectory=/opt/db-restore-api
+EnvironmentFile=/opt/db-restore-api/.env
+ExecStart=/opt/db-restore-api/.venv/bin/uvicorn src.main:app --host 0.0.0.0 --port 8000 --workers 4
 Restart=always
 RestartSec=5
 
@@ -239,16 +142,78 @@ WantedBy=multi-user.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable lms-restore
-sudo systemctl start lms-restore
-sudo systemctl status lms-restore
+sudo systemctl enable db-restore
+sudo systemctl start db-restore
+sudo systemctl status db-restore
 ```
+
+---
+
+## Nightly scheduled backup
+
+### Option A — Crontab
+
+```bash
+crontab -e
+```
+
+Add this line:
+
+```cron
+0 0 * * * curl -s -X POST http://localhost:8000/backup/create \
+  -H "Content-Type: application/json" \
+  -d '{"notes": "nightly auto backup", "created_by": "cron"}' \
+  >> /var/log/lms_backup.log 2>&1
+```
+
+### Option B — Systemd Timer (recommended for production)
+
+Create `/etc/systemd/system/lms-backup.service`:
+
+```ini
+[Unit]
+Description=Nightly Backup
+After=network.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+ExecStart=curl -s -X POST http://localhost:8000/backup/create \
+  -H "Content-Type: application/json" \
+  -d "{\"notes\": \"nightly auto backup\", \"created_by\": \"systemd\"}"
+StandardOutput=append:/var/log/lms_backup.log
+StandardError=append:/var/log/lms_backup.log
+```
+
+Create `/etc/systemd/system/lms-backup.timer`:
+
+```ini
+[Unit]
+Description=Run LMS backup every night at 00:00
+Requires=lms-backup.service
+
+[Timer]
+OnCalendar=*-*-* 00:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable lms-backup.timer
+sudo systemctl start lms-backup.timer
+sudo systemctl list-timers --all | grep lms
+```
+
+> `Persistent=true` means if the server was off at midnight, the backup runs immediately on next boot.
 
 ---
 
 ## API reference
 
-Interactive docs available at `http://localhost:8000/docs` after starting.
+Interactive docs at `http://localhost:8000/docs` after starting.
 
 ---
 
@@ -273,12 +238,15 @@ Check that all DB connections are alive.
 
 Take a full backup of the main database.
 
-**What happens internally:**
-1. Generates a name: `backup_db_20240526_143022`
-2. Creates that database on the backup host
-3. Runs `pg_dump` on main DB → saves `/backups/backup_db_20240526_143022.dump`
-4. Runs `pg_restore` → loads the dump into the new backup DB
-5. Saves a `BackupLog` record to the meta DB
+**Steps performed internally:**
+
+| Step | Action |
+|------|--------|
+| 1 | Generate name: `backup_db_YYYYMMDD_HHMMSS` |
+| 2 | `CREATE DATABASE backup_db_...` on backup host |
+| 3 | `pg_dump` main DB → saves to `BACKUP_DUMP_DIR` |
+| 4 | `pg_restore` dump → loads into new backup DB |
+| 5 | Save `BackupLog` to meta DB |
 
 **Request body** (all fields optional)
 ```json
@@ -292,40 +260,183 @@ Take a full backup of the main database.
 ```json
 {
   "id": 1,
-  "db_name": "backup_db_20240526_143022",
-  "dump_file": "/backups/backup_db_20240526_143022.dump",
+  "db_name": "backup_db_20260528_000000",
+  "dump_file": "/backups/backup_db_20260528_000000.dump",
   "size_mb": 142.5,
   "status": "completed",
   "error_message": null,
   "notes": "before deploy v2.4",
   "created_by": "admin",
-  "created_at": "2024-05-26T14:30:22Z",
-  "completed_at": "2024-05-26T14:31:05Z"
+  "created_at": "2026-05-28T00:00:00Z",
+  "completed_at": "2026-05-28T00:01:05Z"
 }
 ```
 
 ---
 
-### `POST /restore/detect-missing`
+### `POST /backup/delete/dump/file//{id}`
 
-**Read-only.** Scans the backup DB and returns all records that are missing from the main DB — including full row data for preview.
+Full delete of a backup in three steps:
 
-Safe to call in production at any time.
+| Step | Action | Controlled by |
+|------|--------|---------------|
+| 1 | `DROP DATABASE backup_db_...` on backup host | `drop_db`     |
+| 2 | Delete `.dump` file from disk | `delete_dump` |
 
-**Request body**
-```json
-{
-  "tables": ["vouchers_voucher", "account_user", "vouchers_studentvoucher"],
-  "backup_db_name": "backup_db_20240526_143022"
-}
-```
-
-If `backup_db_name` is omitted, the default backup DB from `.env` is used.
 
 **Response**
 ```json
 {
-  "backup_db_used": "backup_db_20240526_143022",
+  "backup_id": 1,
+  "db_name": "backup_db_20260528_000000",
+  "dump_file": "/backups/backup_db_20260528_000000.dump",
+  "db_dropped": true,
+  "log_deleted": true,
+  "errors": [],
+  "success": true
+}
+```
+
+HTTP **200** = all steps succeeded
+HTTP **207** = partial success — check `errors` list
+
+---
+
+### `GET /backups/`
+
+List all `BackupLog` entries, newest first.
+
+**Response**
+```json
+[
+  {
+    "id": 1,
+    "filename": "backup_db_20260528_000000.dump",
+    "local_path": "/backups/backup_db_20260528_000000.dump",
+    "size_mb": 142.5,
+    "storage": "local",
+    "status": "completed",
+    "error_message": null,
+    "notes": "nightly auto backup",
+    "backup_db_name": "backup_db_20260528_000000",
+    "created_by": "cron",
+    "created_at": "2026-05-28T00:00:00Z",
+    "completed_at": "2026-05-28T00:01:05Z"
+  }
+]
+```
+
+---
+
+### `GET /backups/{id}`
+
+Get a single `BackupLog` entry by ID.
+
+**Response**
+```json
+{
+  "id": 1,
+  "filename": "backup_db_20260528_000000.dump",
+  "local_path": "/backups/backup_db_20260528_000000.dump",
+  "size_mb": 142.5,
+  "storage": "local",
+  "status": "completed",
+  "error_message": null,
+  "notes": "nightly auto backup",
+  "backup_db_name": "backup_db_20260528_000000",
+  "created_by": "cron",
+  "created_at": "2026-05-28T00:00:00Z",
+  "completed_at": "2026-05-28T00:01:05Z"
+}
+```
+
+---
+
+### `GET /backups/{id}/download`
+
+Download the `.dump` file for a backup directly from the server disk.
+
+The file is served with its original filename (e.g. `backup_db_20260528_000000.dump`)
+and `Content-Type: application/octet-stream`.
+
+**Response** — binary file stream
+
+Returns **404** if:
+- `BackupLog` not found
+- `local_path` not recorded
+- File missing from disk
+
+---
+
+### `DELETE /backups/{id}`
+
+Soft delete — removes only the `BackupLog` and its `RevertLog` records from the meta DB. Does **not** drop the backup database or delete the dump file.
+
+Use `POST /backup/delete/{id}` for a full delete.
+
+**Response**
+```json
+{
+  "detail": "BackupLog #1 deleted."
+}
+```
+
+---
+
+### `GET /backups/{id}/revert-logs`
+
+List all restore audit entries for a specific backup.
+
+**Response**
+```json
+[
+  {
+    "id": 1,
+    "backup_log_id": 1,
+    "table_name": "account_user",
+    "object_id": 10,
+    "reverted_by": "admin",
+    "reverted_at": "2026-05-28T10:30:00Z",
+    "success": true,
+    "error_message": null,
+    "notes": "restoring deleted user"
+  }
+]
+```
+
+---
+
+### `GET /backups/revert-logs/all`
+
+List every restore audit entry across all backups.
+
+**Response** — same structure as above, all entries combined.
+
+---
+
+### `POST /restore/detect-missing`
+
+**Read-only.** Scans the backup DB and returns all records missing from the main DB
+including full row data for preview. Safe to call at any time.
+
+**Request body**
+```json
+{
+  "tables": [
+    "vouchers_voucher",
+    "account_user",
+    "vouchers_studentvoucher"
+  ],
+  "backup_db_name": "backup_db_20260528_000000"
+}
+```
+
+`backup_db_name` is optional — omit to use the default backup DB from `.env`.
+
+**Response**
+```json
+{
+  "backup_db_used": "backup_db_20260528_000000",
   "backup_log_id": null,
   "total_missing": 2,
   "missing": [
@@ -357,19 +468,19 @@ If `backup_db_name` is omitted, the default backup DB from `.env` is used.
 
 ### `POST /restore/ordered`
 
-Restores missing records into the main DB **in the order you specify**.
+Restores missing records into the main DB in the order you specify.
 
 **Request body**
 ```json
 {
   "tables": [
-    "vouchers_voucher",
+    "courseSalePackage_voucher",
     "account_user",
     "account_student",
-    "management_schoolbookstudent",
-    "vouchers_studentvoucher"
+    "courseSalePackage_studentvoucher"
   ],
-  "backup_db_name": "backup_db_20240526_143022",
+  "backup_db_name": "backup_db_20260528_000000",
+  "backup_log_id": null,
   "notes": "restoring accidentally deleted user #10",
   "dry_run": false
 }
@@ -378,15 +489,15 @@ Restores missing records into the main DB **in the order you specify**.
 | Field | Required | Description |
 |-------|----------|-------------|
 | `tables` | yes | Ordered table names — FK parents before children |
-| `backup_db_name` | no | Which backup DB to restore from. Omit = use default from `.env` |
+| `backup_db_name` | no | Backup DB to restore from. Omit = default from `.env` |
 | `backup_log_id` | no | Use a specific BackupLog's snapshots if available |
-| `notes` | no | Saved to every RevertLog entry |
-| `dry_run` | no | `true` = detect only, do not write anything |
+| `notes` | no | Saved to every `RevertLog` audit entry |
+| `dry_run` | no | `true` = detect only, write nothing |
 
 **Response**
 ```json
 {
-  "backup_db_used": "backup_db_20240526_143022",
+  "backup_db_used": "backup_db_20260528_000000",
   "backup_log_id": null,
   "dry_run": false,
   "total_missing": 3,
@@ -418,65 +529,32 @@ Restores missing records into the main DB **in the order you specify**.
 }
 ```
 
-HTTP **200** = all records restored successfully  
-HTTP **207** = partial success (some failed — check `failed_ids` and `errors`)
+HTTP **200** = all restored successfully
+HTTP **207** = partial success — check `failed_ids` and `errors` per table
 
 ---
 
-### `GET /backups/`
+## FK ordering rule
 
-List all BackupLog entries, newest first.
+Always list FK **parent tables before child tables**.
 
----
+```
+WRONG:  ["vouchers_studentvoucher", "vouchers_voucher"]
+                   ↑ child before parent → FK constraint error
 
-### `GET /backups/{id}`
-
-Get a single BackupLog entry by ID.
-
----
-
-### `DELETE /backups/{id}`
-
-Delete a BackupLog entry and its associated RevertLog records from the meta DB.  
-This does **not** delete the actual `.dump` file or the backup database.
-
----
-
-### `GET /backups/{id}/revert-logs`
-
-List all restore audit entries for a specific backup.
-
----
-
-### `GET /backups/revert-logs/all`
-
-List every restore audit entry across all backups.
-
----
-
-## FK ordering guide
-
-Always list tables so that **FK parent tables come before their children**.
-
-### Example — `StudentVoucher` model
-
-```python
-class StudentVoucher(models.Model):
-    voucher              = ForeignKey(Voucher, ...)          # parent 1
-    student              = ForeignKey(Student, ...)          # parent 2
-    owner                = ForeignKey(User, ...)             # parent 3
-    school_book_student  = ForeignKey(SchoolBookStudent, ...) # parent 4
+CORRECT: ["vouchers_voucher", "account_user", "vouchers_studentvoucher"]
+                 ↑ parents first              ↑ child last
 ```
 
-Correct table order for the API:
+Example with the full `StudentVoucher` dependency chain:
 
 ```json
 "tables": [
-  "vouchers_voucher",                   // parent 1  ← first
-  "account_user",                        // parent 3
-  "account_student",                     // parent 2
-  "management_schoolbookstudent",        // parent 4
-  "vouchers_studentvoucher"              // child     ← last
+  "vouchers_voucher",                  ← FK parent 1
+  "account_user",                      ← FK parent 2
+  "account_student",                   ← FK parent 3
+  "management_schoolbookstudent",      ← FK parent 4
+  "vouchers_studentvoucher"            ← child (has all 4 FKs above)
 ]
 ```
 
@@ -484,7 +562,7 @@ Correct table order for the API:
 
 ## Typical workflows
 
-### Workflow 1 — Regular nightly backup
+### Nightly backup (manual trigger)
 
 ```bash
 curl -X POST http://localhost:8000/backup/create \
@@ -492,42 +570,52 @@ curl -X POST http://localhost:8000/backup/create \
   -d '{"notes": "nightly backup", "created_by": "cron"}'
 ```
 
-### Workflow 2 — Restore a deleted user and related records
+### Restore a deleted user and related records
 
-**Step 1 — Preview (safe)**
 ```bash
+# Step 1 — preview (safe, read-only)
 curl -X POST http://localhost:8000/restore/detect-missing \
   -H "Content-Type: application/json" \
   -d '{
     "tables": ["account_user", "account_student", "vouchers_studentvoucher"],
-    "backup_db_name": "backup_db_20240526_143022"
+    "backup_db_name": "backup_db_20260528_000000"
   }'
-```
 
-**Step 2 — Restore**
-```bash
+# Step 2 — restore
 curl -X POST http://localhost:8000/restore/ordered \
   -H "Content-Type: application/json" \
   -d '{
     "tables": [
+      "vouchers_voucher",
       "account_user",
       "account_student",
+      "management_schoolbookstudent",
+      "vouchers_studentvoucher"
     ],
-    "backup_db_name": "backup_db_20240526_143022",
+    "backup_db_name": "backup_db_20260528_000000",
     "notes": "restoring deleted user #10"
   }'
-```
 
-**Step 3 — Check audit trail**
-```bash
+# Step 3 — check audit trail
 curl http://localhost:8000/backups/revert-logs/all
 ```
 
-### Workflow 3 — Find the right backup DB name
+### Download a backup dump file
 
 ```bash
-# List all backups ordered by newest first
-curl http://localhost:8000/backups/
+curl -OJ http://localhost:8000/backups/1/download
+```
 
-# Use the db_name field from the response in your restore request
+### Full delete of a backup
+
+```bash
+curl -X POST http://localhost:8000/backup/delete/1 \
+  -H "Content-Type: application/json" 
+```
+
+### Find the right backup DB name
+
+```bash
+# list all backups, newest first — use db_name in restore requests
+curl http://localhost:8000/backups/
 ```

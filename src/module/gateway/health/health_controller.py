@@ -2,19 +2,19 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_main_db, get_meta_db
+from src.database import get_main_db, get_meta_db
 
 router = APIRouter(tags=["Health"])
 
 
 @router.get("/health", summary="Health check — all DBs")
 async def health(
-    main: AsyncSession = Depends(get_main_db),
-    meta: AsyncSession = Depends(get_meta_db),
+    main_session: AsyncSession = Depends(get_main_db),
+    meta_session: AsyncSession = Depends(get_meta_db),
 ):
     results = {}
 
-    for name, session in [("main_db", main), ("meta_db", meta)]:
+    for name, session in [("main_db", main_session), ("meta_db", meta_session)]:
         try:
             await session.execute(text("SELECT 1"))
             results[name] = "ok"

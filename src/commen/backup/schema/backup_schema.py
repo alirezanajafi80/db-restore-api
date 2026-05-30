@@ -23,3 +23,29 @@ class CreateBackupResponse(BaseModel):
     completed_at: datetime | None
 
     model_config = {"from_attributes": True}
+
+
+class DeleteBackupSchema(BaseModel):
+    backup_id: int
+    db_name: str = Field(description="Name of the newly created backup database.")
+    dump_file: str | None
+    dump_deleted: bool = False
+    log_deleted: bool = False
+    errors: list[str] = Field(default_factory=list)
+
+    @property
+    def success(self) -> bool:
+        return not self.errors
+
+
+class DeleteBackupResultSchema(BaseModel):
+    backup_id: int
+    db_name: str
+    dump_file: str | None
+    db_dropped: bool = False
+    log_deleted: bool = False
+    errors: list[str] = Field(default_factory=list)
+
+    @property
+    def success(self) -> bool:
+        return not self.errors
