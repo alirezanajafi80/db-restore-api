@@ -11,18 +11,11 @@ from sqlalchemy import (
     Text,
     func,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+from common.lib.base_entity import BaseEntity
 
 
-class Base(DeclarativeBase):
-    pass
-
-
-class BackupLog(Base):
-    """
-    Metadata record for each backup operation.
-    Mirrors the Django BackupLog model but lives in the meta DB.
-    """
+class BackupLogEntity(BaseEntity):
     __tablename__ = "backup_log"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -47,56 +40,44 @@ class BackupLog(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # relationships
-    snapshots: Mapped[list["RecordSnapshot"]] = relationship("RecordSnapshot",
-                                                             back_populates="backup_log",
-                                                             cascade="all, delete-orphan")
-    revert_logs: Mapped[list["RevertLog"]] = relationship("RevertLog",
-                                                          back_populates="backup_log",
-                                                          cascade="all, delete-orphan")
+    snapshots: Mapped[list["RecordSnapshotEntity"]] = relationship("RecordSnapshotEntity",
+                                                                   back_populates="backup_log",
+                                                                   cascade="all, delete-orphan")
+    revert_logs: Mapped[list["RevertLogEntity"]] = relationship("RevertLogEntity",
+                                                                back_populates="backup_log",
+                                                                cascade="all, delete-orphan")
     db_dropped: Mapped[bool] = mapped_column(Boolean, default=False)
 
     @property
     def size_mb(self) -> float | None:
         return round(self.size_bytes / (1024 * 1024), 2) if self.size_bytes else None
 
-
-class RecordSnapshot(Base):
-    """
-    JSON snapshot of a single DB record captured during backup.
-    Enables per-item restore without a live backup DB connection.
-    """
+class RecordSnapshotEntity(BaseEntity):
     __tablename__ = "record_snapshot"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     backup_log_id: Mapped[int] = mapped_column(ForeignKey("backup_log.id", ondelete="CASCADE"))
-    model_label: Mapped[str] = mapped_column(String(150),
-                                             doc="e.g. 'vouchers_studentvoucher'  (table name)")
+    model_label: Mapped[str] = mapped_column(String(150))
     object_id: Mapped[int] = mapped_column(Integer)
-    data: Mapped[Any] = mapped_column(JSON, doc="Full row as JSON dict")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),
-                                                 server_default=func.now())
+    data: Mapped[Any] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    backup_log: Mapped["BackupLog"] = relationship("BackupLog", back_populates="snapshots")
+    backup_log: Mapped["BackupLogEntity"] = relationship("BackupLogEntity", back_populates="snapshots")
 
 
-class RevertLog(Base):
-    """
-    Audit trail: one row per restored record.
-    """
+class RevertLogEntity(BaseEntity):
     __tablename__ = "revert_log"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     backup_log_id: Mapped[int | None] = mapped_column(ForeignKey("backup_log.id",
-                                                                 ondelete="SET NULL"), nullable=True)
+                                                                  ondelete="SET NULL"), nullable=True)
     table_name: Mapped[str] = mapped_column(String(150))
     object_id: Mapped[int] = mapped_column(Integer)
     reverted_by: Mapped[str | None] = mapped_column(String(150), nullable=True)
-    reverted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),
-                                                  server_default=func.now())
+    reverted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     success: Mapped[bool] = mapped_column(Boolean, default=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     notes: Mapped[str] = mapped_column(Text, default="")
-    restored_data: Mapped[Any | None] = mapped_column(JSON, nullable=True,
-                                                      doc="Snapshot of what was restored")
+    restored_data: Mapped[Any | None] = mapped_column(JSON, nullable=True)
 
-    backup_log: Mapped["BackupLog | None"] = relationship("BackupLog", back_populates="revert_logs")
+    backup_log: Mapped["BackupLogEntity | None"] = relationship("BackupLogEntity", back_populates="revert_logs")

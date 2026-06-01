@@ -1,11 +1,26 @@
+import os
+from enum import Enum
 from functools import lru_cache
+from typing import List
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ENV_FILE = os.path.join(ROOT_DIR, ".env")
+
+
+class EnvironmentEnum(str, Enum):
+    TEST = 'TEST'
+    DEVELOPMENT = 'DEVELOPMENT'
+    PRODUCTION = 'PRODUCTION'
+    BG_TASK = 'BG_TASK'
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=ENV_FILE,
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
@@ -38,12 +53,14 @@ class Settings(BaseSettings):
     AWS_S3_REGION_NAME: str = Field("eu-west-1", alias='AWS_S3_REGION_NAME')
 
     # ── App ──────────────────────────────────────────────────────────────────
-    APP_ENV:    str = "development"
+    ENV: EnvironmentEnum = Field(..., alias='ENV')
     SECRET_KEY: str = "change-me"
     LOG_LEVEL:  str = "INFO"
 
     # ── Media ──────────────────────────────────────────────────────────────────
     BACKUP_DUMP_DIR: str = Field(..., alias='BACKUP_DUMP_DIR')
+
+    CORS_ALLOW_ORIGINS: List[str] = Field(['*'], alias='CORS_ALLOW_ORIGINS')
 
     # ── Computed DSNs ────────────────────────────────────────────────────────
     @property
@@ -81,5 +98,3 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
-
-print(get_settings().model_dump())

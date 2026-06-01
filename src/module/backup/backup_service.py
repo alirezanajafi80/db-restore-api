@@ -27,10 +27,13 @@ from pathlib import Path
 import asyncpg
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from commen.backup.schema.backup_schema import DeleteBackupSchema
-from src.commen.settings import get_settings
-from src.models.meta_models import BackupLog
-from src.commen.utils.timestamp import DatetimeUtil
+from common.backup.enums import BackupStatusEnum
+from common.backup.schema.backup_schema import DeleteBackupSchema
+from common.lib.background_task.background_task_wrapper import BackgroundTaskWrapper
+from common.lib.background_task.lifespan.async_workers_lifespan import lifespan_add_task
+from common.settings import get_settings
+from models.meta_models import BackupLogEntity
+from common.utils.timestamp import DatetimeUtil
 
 
 logger = logging.getLogger(__name__)
@@ -38,7 +41,7 @@ settings = get_settings()
 
 
 class BackupService:
-    def __init__(self, meta_session: AsyncSession):
+    def __init__(self, meta_session: AsyncSession = None):
         self.meta_session = meta_session
 
     @staticmethod
@@ -65,7 +68,7 @@ class BackupService:
     def _pg_backup_env() -> dict:
         """Environment for pg_restore targeting the BACKUP host."""
         env = os.environ.copy()
-        env["PGPASSWORD"] = settings.default_backup_db_password
+        env["PGPASSWORD"] = settings.DEFAUTL_BACKUP_DB_PASSWORD
         return env
 
     async def _create_backup_database(self, db_name: str) -> None:
@@ -129,9 +132,9 @@ class BackupService:
             "pg_restore",
             "--no-acl",
             "--no-owner",
-            "--host", settings.default_backup_db_host,
-            "--port", str(settings.default_backup_db_port),
-            "--username", settings.default_backup_db_user,
+            "--host", settings.DEFAUTL_BACKUP_DB_HOST,
+            "--port", str(settings.DEFAUTL_BACKUP_DB_PORT),
+            "--username", settings.DEFAUTL_BACKUP_DB_USER,
             "--dbname", target_db,
             "--verbose",
             str(dump_path),
@@ -162,10 +165,10 @@ class BackupService:
         error: str = "",
         notes: str = "",
         created_by: str | None = None,
-    ) -> BackupLog:
+    ) -> BackupLogEntity:
         size_bytes = dump_path.stat().st_size if dump_path.exists() else None
 
-        log = BackupLog(
+        log = BackupLogEntity(
             filename=dump_path.name,
             local_path=str(dump_path),
             size_bytes=size_bytes,
@@ -187,7 +190,7 @@ class BackupService:
             self,
             notes: str = "",
             created_by: str | None = None,
-    ) -> BackupLog:
+    ) -> BackupLogEntity:
         tag = self._now_tag()
         db_name = f"backup_db_{tag}"
         filename = f"{db_name}.dump"
@@ -203,7 +206,7 @@ class BackupService:
             logger.error(error_msg)
             return await self._save_backup_log(
                 db_name, dump_path,
-                status="failed", error=error_msg, notes=notes, created_by=created_by,
+                status=BackupStatusEnum.FAILED, error=error_msg, notes=notes, created_by=created_by,
             )
 
         # ── 2. pg_dump main DB ────────────────────────────────────────────────────
@@ -214,7 +217,7 @@ class BackupService:
             logger.error(error_msg)
             return await self._save_backup_log(
                 db_name, dump_path,
-                status="failed", error=error_msg, notes=notes, created_by=created_by,
+                status=BackupStatusEnum.FAILED, error=error_msg, notes=notes, created_by=created_by,
             )
 
         # ── 3. pg_restore into new backup DB ─────────────────────────────────────
@@ -225,13 +228,13 @@ class BackupService:
             logger.error(error_msg)
             return await self._save_backup_log(
                 db_name, dump_path,
-                status="failed", error=error_msg, notes=notes, created_by=created_by,
+                status=BackupStatusEnum.FAILED, error=error_msg, notes=notes, created_by=created_by,
             )
 
         # ── 4. Save successful BackupLog ──────────────────────────────────────────
         log = await self._save_backup_log(
             db_name, dump_path,
-            status="completed", notes=notes, created_by=created_by,
+            status=BackupStatusEnum.COMPLETED, notes=notes, created_by=created_by,
         )
 
         logger.info(
@@ -241,6 +244,13 @@ class BackupService:
             dump_path,
         )
         return log
+
+    async def create_backup_db_ground_task(self, notes, created_by) -> None:
+        await lifespan_add_task(BackgroundTaskWrapper(
+            coroutine_generator=lambda: self.create_backup(notes, created_by),
+            is_periodic=False,
+            frequency_execute_seconds=0
+        ))
 
     def _delete_dump_file(self, local_path: str | None) -> bool:
         """
@@ -264,17 +274,7 @@ class BackupService:
             self,
             backup_id: int,
     ) -> DeleteBackupSchema:
-        """
-        Delete workflow:
-          1. Load BackupLog by ID
-          2. Delete .dump file from BACKUP_DUMP_DIR
-          3. Delete BackupLog + RevertLogs from meta DB
-
-        Raises ValueError if BackupLog not found.
-        """
-
-        # ── Load BackupLog ────────────────────────────────────────────────────────
-        log: BackupLog | None = await self.meta_session.get(BackupLog, backup_id)
+        log: BackupLogEntity | None = await self.meta_session.get(BackupLogEntity, backup_id)
         if not log:
             raise ValueError(f"BackupLog #{backup_id} not found.")
 
@@ -284,7 +284,6 @@ class BackupService:
             db_name=log.filename
         )
 
-        # ── Step 1: Delete dump file ──────────────────────────────────────────────
         try:
             result.dump_deleted = self._delete_dump_file(log.local_path)
         except Exception as exc:
@@ -292,8 +291,6 @@ class BackupService:
             logger.error(msg)
             result.errors.append(msg)
 
-        # ── Step 2: Delete BackupLog from meta DB ─────────────────────────────────
-        # Always runs — even if file delete failed, so admin can clean orphaned logs.
         try:
             log.db_dropped = result.dump_deleted
             await self.meta_session.commit()

@@ -4,8 +4,8 @@ Pydantic v2 schemas for request / response validation.
 """
 
 from datetime import datetime
-from typing import Any
-from pydantic import BaseModel, Field, field_validator, model_validator
+from typing import Any, Optional
+from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 
 
 class OkResponse(BaseModel):
@@ -13,23 +13,23 @@ class OkResponse(BaseModel):
 
 
 class BackupLogSchema(BaseModel):
-    id:             int
-    filename:       str
-    local_path:     str | None = None
-    s3_key:         str | None = None
-    s3_bucket:      str | None = None
-    size_bytes:     int | None = None
-    size_mb:        float | None = None
-    storage:        str
-    status:         str
-    error_message:  str | None = None
-    notes:          str = ""
-    backup_db_name: str | None = None
-    created_by:     str | None = None
-    created_at:     datetime
-    completed_at:   datetime | None = None
+    id: int
+    filename: str
+    local_path: str
+    s3_key: Optional[str] = None
+    s3_bucket: Optional[str] = None
+    size_bytes: Optional[int] = None
+    storage: str
+    status: str
+    error_message: Optional[str] = None
+    notes: Optional[str] = None
+    backup_db_name: str
+    created_by: Optional[str] = None
+    created_at: datetime
+    completed_at: Optional[datetime] = None
+    db_dropped: Optional[bool] = None
 
-    model_config = {"from_attributes": True}
+    model_config = ConfigDict(from_attributes=True)
 
     @model_validator(mode="before")
     @classmethod

@@ -1,19 +1,15 @@
 import json
 import logging
-from contextlib import asynccontextmanager
-
 from fastapi import FastAPI, Request
-
-from src.commen.settings import get_settings
-from src.database import get_meta_engine
-from src.models.meta_models import Base
-from src.module.gateway.backup import backup_controller
-from src.module.gateway.restore import restore_controller
-from src.module.gateway.health import health_controller
+from common.settings import get_settings
+from module.gateway.backup import backup_controller
+from module.gateway.restore import restore_controller
+from module.gateway.health import health_controller
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from src.commen.schedulers import scheduler
+from common.lib.background_task.lifespan.lifespan_manager import manager
+
 
 settings = get_settings()
 
@@ -22,28 +18,6 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
-
-
-# ── Lifespan: create meta DB tables on startup ────────────────────────────────
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Create audit-trail tables in meta DB if they don't exist
-    engine = get_meta_engine()
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    logger.info("Meta DB tables ready.")
-    yield
-
-    scheduler.start()
-    print("Scheduler started!!!")
-    yield
-
-    scheduler.shutdown()
-    print("Scheduler shutdown")
-
-    # Shutdown: nothing special needed (connection pools close automatically)
-    logger.info("LMS Restore API shutting down.")
 
 
 app = FastAPI(
@@ -65,7 +39,7 @@ app = FastAPI(
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
-    lifespan=lifespan,
+    lifespan=manager,
 )
 
 

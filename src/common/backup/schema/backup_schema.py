@@ -49,3 +49,8 @@ class DeleteBackupResultSchema(BaseModel):
     @property
     def success(self) -> bool:
         return not self.errors
+
+
+class BackgroundBackupResponse(BaseModel):
+    success: bool
+    message: str

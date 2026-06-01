@@ -1,17 +1,17 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.database import get_main_db, get_meta_db, get_backup_engine
-from src.commen.settings import get_settings
-from src.commen.restore.schema.restore_schema import (
+from database.setup import get_backup_db, get_main_db_dep, get_meta_db_dep
+from common.settings import get_settings
+from common.restore.schema.restore_schema import (
     DetectMissingRequest,
     DetectMissingResponse,
     OrderedRestoreRequest,
     OrderedRestoreResponse,
 )
-from src.module.restore.restore_service import RestoreService
+from module.restore.restore_service import RestoreService
 
 
 logger = logging.getLogger(__name__)
@@ -51,18 +51,14 @@ settings = get_settings()
 )
 async def ordered_restore_endpoint(
         body: OrderedRestoreRequest,
-        main_session: AsyncSession = Depends(get_main_db),
-        meta_session: AsyncSession = Depends(get_meta_db),
+        main_session: AsyncSession = Depends(get_main_db_dep),
+        meta_session: AsyncSession = Depends(get_meta_db_dep),
 ) -> OrderedRestoreResponse:
     # Build the backup DSN / meta_session inline so we use body.backup_db_name
     backup_db_name = body.backup_db_name
-    engine = get_backup_engine(backup_db_name)
-
-    from sqlalchemy.ext.asyncio import async_sessionmaker
-    factory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
 
     try:
-        async with factory() as backup_session:
+        async with get_backup_db(backup_db_name) as backup_session:
             result = await RestoreService().ordered_restore(
                 tables=body.tables,
                 main_session=main_session,
@@ -71,7 +67,7 @@ async def ordered_restore_endpoint(
                 backup_db_name=backup_db_name,
                 backup_log_id=body.backup_log_id,
                 notes=body.notes,
-                performed_by=None,  # extend: pass auth user here
+                performed_by=None,  # TODO: extend pass auth user here
                 dry_run=body.dry_run,
             )
     except Exception as exc:
@@ -98,24 +94,22 @@ async def ordered_restore_endpoint(
 )
 async def detect_missing_endpoint(
         body: DetectMissingRequest,
-        main_session: AsyncSession = Depends(get_main_db),
-        meta_session: AsyncSession = Depends(get_meta_db),
+        main_session: AsyncSession = Depends(get_main_db_dep),
+        meta_session: AsyncSession = Depends(get_meta_db_dep),
 ) -> DetectMissingResponse:
-    backup_db_name = body.backup_db_name
-    engine = get_backup_engine(body.backup_db_name)
-
-    factory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
 
     try:
-        async with factory() as backup_session:
+        async with get_backup_db(body.backup_db_name) as backup_session:
             result = await RestoreService().detect_missing(
                 tables=body.tables,
                 main_session=main_session,
                 backup_session=backup_session,
                 meta_session=meta_session,
-                backup_db_name=backup_db_name,
+                backup_db_name=body.backup_db_name,
                 backup_log_id=body.backup_log_id,
             )
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.exception("detect_missing failed")
         raise HTTPException(

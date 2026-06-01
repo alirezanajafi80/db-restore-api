@@ -15,14 +15,14 @@ ANY table — no Django ORM, no model registration needed.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 
-from sqlalchemy import text
+from sqlalchemy import text, select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from src.module.restore.schema import RestoreResultSchema
-from src.models.meta_models import BackupLog, RevertLog
-from src.commen.restore.schema.restore_schema import (
+from common.backup.enums import BackupStatusEnum
+from module.restore.schema import RestoreResultSchema
+from models.meta_models import BackupLogEntity, RevertLogEntity
+from common.restore.schema.restore_schema import (
     DetectMissingResponse,
     MissingRecord,
     OrderedRestoreResponse,
@@ -105,23 +105,20 @@ class RestoreService:
             self,
             meta_session: AsyncSession,
             backup_log_id: int | None,
-    ) -> BackupLog | None:
-        """Return the requested BackupLog, or the latest completed one."""
-        from sqlalchemy import select
-
+    ) -> BackupLogEntity | None:
         if backup_log_id:
             result = await meta_session.execute(
-                select(BackupLog).where(
-                    BackupLog.id == backup_log_id,
-                    BackupLog.status == "completed",
+                select(BackupLogEntity).where(
+                    BackupLogEntity.id == backup_log_id,
+                    BackupLogEntity.status == BackupStatusEnum.COMPLETED,
                 )
             )
             return result.scalar_one_or_none()
 
         result = await meta_session.execute(
-            select(BackupLog)
-            .where(BackupLog.status == "completed")
-            .order_by(BackupLog.created_at.desc())
+            select(BackupLogEntity)
+            .where(BackupLogEntity.status == BackupStatusEnum.COMPLETED)
+            .order_by(BackupLogEntity.created_at.desc())
             .limit(1)
         )
         return result.scalar_one_or_none()
@@ -192,7 +189,7 @@ class RestoreService:
             main_session: AsyncSession,
             backup_session: AsyncSession,
             meta_session: AsyncSession,
-            backup_log: BackupLog | None,
+            backup_log: BackupLogEntity | None,
             notes: str,
             performed_by: str | None,
             dry_run: bool,
@@ -286,7 +283,7 @@ class RestoreService:
     async def _write_revert_log(
             self,
             meta_session: AsyncSession,
-            backup_log: BackupLog | None,
+            backup_log: BackupLogEntity | None,
             table: str,
             pk: int,
             row: dict,
@@ -297,7 +294,7 @@ class RestoreService:
     ) -> None:
         """Best-effort audit write — never raises."""
         try:
-            log = RevertLog(
+            log = RevertLogEntity(
                 backup_log_id=backup_log.id if backup_log else None,
                 table_name=table,
                 object_id=pk,
@@ -310,6 +307,7 @@ class RestoreService:
             )
             meta_session.add(log)
             await meta_session.flush()
+            await meta_session.commit()
         except Exception as exc:
             logger.warning("Could not write RevertLog: %s", exc)
 
@@ -318,6 +316,8 @@ class RestoreService:
         out = {}
         for k, v in row.items():
             if isinstance(v, datetime):
+                out[k] = v.isoformat()
+            elif isinstance(v, date):
                 out[k] = v.isoformat()
             else:
                 out[k] = v

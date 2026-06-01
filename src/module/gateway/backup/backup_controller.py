@@ -1,18 +1,17 @@
 import logging
-from pathlib import Path
 
-from src.commen.backup.schema.backup_schema import CreateBackupResponse, CreateBackupRequest, DeleteBackupResultSchema
-from src.module.backup.backup_service import BackupService
+from common.backup.schema.backup_schema import CreateBackupResponse, CreateBackupRequest, DeleteBackupResultSchema, \
+    BackgroundBackupResponse
+from module.backup.backup_service import BackupService
 import os
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi.responses import FileResponse, JSONResponse
 
-from src.database import get_meta_db
-from src.models.meta_models import BackupLog, RevertLog
-from src.commen.restore.schema.restore_schema import BackupLogSchema, OkResponse, RevertLogSchema
-import aiofiles.os as aio_os
+from database.setup import get_meta_db, get_meta_db_dep
+from models.meta_models import BackupLogEntity, RevertLogEntity
+from common.restore.schema.restore_schema import BackupLogSchema, OkResponse, RevertLogSchema
 
 
 logger = logging.getLogger(__name__)
@@ -53,7 +52,7 @@ router = APIRouter(prefix="/backup", tags=["Backup"])
 )
 async def create_backup_endpoint(
         body: CreateBackupRequest = CreateBackupRequest(),
-        meta_session: AsyncSession = Depends(get_meta_db),
+        meta_session: AsyncSession = Depends(get_meta_db_dep),
 ) -> CreateBackupResponse:
     log = await BackupService(meta_session=meta_session).create_backup(
         notes=body.notes,
@@ -80,6 +79,24 @@ async def create_backup_endpoint(
     )
 
 
+@router.post(
+    "/create/background/",
+    response_model=BackgroundBackupResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a full backup of the main database in background",
+)
+async def create_backup_background_endpoint(
+        body: CreateBackupRequest = CreateBackupRequest(),
+        meta_session: AsyncSession = Depends(get_meta_db_dep),
+) -> BackgroundBackupResponse:
+    await BackupService(meta_session=meta_session).create_backup_db_ground_task(
+        notes=body.notes,
+        created_by=body.created_by,
+    )
+
+    return BackgroundBackupResponse(success=True, message="Backup task scheduled successfully")
+
+
 @router.get(
     "/{backup_id}/download",
     summary="Download the .dump file for a backup",
@@ -87,9 +104,9 @@ async def create_backup_endpoint(
 )
 async def download_backup(
         backup_id: int,
-        session: AsyncSession = Depends(get_meta_db),
+        session: AsyncSession = Depends(get_meta_db_dep),
 ) -> FileResponse:
-    log = await session.get(BackupLog, backup_id)
+    log = await session.get(BackupLogEntity, backup_id)
     if not log:
         raise HTTPException(status_code=404, detail="BackupLog not found.")
 
@@ -117,10 +134,10 @@ async def download_backup(
     summary="List all backup log entries",
 )
 async def list_backups(
-        session: AsyncSession = Depends(get_meta_db),
+        session: AsyncSession = Depends(get_meta_db_dep),
 ) -> list[BackupLogSchema]:
     result = await session.execute(
-        select(BackupLog).order_by(BackupLog.created_at.desc())
+        select(BackupLogEntity).order_by(BackupLogEntity.created_at.desc())
     )
     logs = result.scalars().all()
     return [BackupLogSchema.model_validate(log) for log in logs]
@@ -133,9 +150,9 @@ async def list_backups(
 )
 async def get_backup(
         backup_id: int,
-        session: AsyncSession = Depends(get_meta_db),
+        session: AsyncSession = Depends(get_meta_db_dep),
 ) -> BackupLogSchema:
-    log = await session.get(BackupLog, backup_id)
+    log = await session.get(BackupLogEntity, backup_id)
     if not log:
         raise HTTPException(status_code=404, detail="BackupLog not found.")
     return BackupLogSchema.model_validate(log)
@@ -148,21 +165,11 @@ async def get_backup(
 )
 async def delete_backup_log(
         backup_id: int,
-        session: AsyncSession = Depends(get_meta_db),
+        session: AsyncSession = Depends(get_meta_db_dep),
 ) -> OkResponse:
-    log = await session.get(BackupLog, backup_id)
+    log = await session.get(BackupLogEntity, backup_id)
     if not log:
         raise HTTPException(status_code=404, detail="BackupLog not found.")
-
-    # db_path = await log.local_path
-    # if db_path:
-    #     path = Path(db_path)
-    #     if await aio_os.path.exists(str(path)):
-    #         try:
-    #             await aio_os.remove(str(path))
-    #             logger.info(f"Deleted file: {db_path}")
-    #         except Exception as e:
-    #             logger.error(f"Failed to delete {db_path}: {e}")
 
     await session.delete(log)
     await session.commit()
@@ -175,10 +182,10 @@ async def delete_backup_log(
     summary="List all revert (restore) audit entries",
 )
 async def list_revert_logs(
-        session: AsyncSession = Depends(get_meta_db),
+        session: AsyncSession = Depends(get_meta_db_dep),
 ) -> list[RevertLogSchema]:
     result = await session.execute(
-        select(RevertLog).order_by(RevertLog.reverted_at.desc())
+        select(RevertLogEntity).order_by(RevertLogEntity.reverted_at.desc())
     )
     logs = result.scalars().all()
     return [RevertLogSchema.model_validate(log) for log in logs]
@@ -191,12 +198,12 @@ async def list_revert_logs(
 )
 async def list_revert_logs_for_backup(
         backup_id: int,
-        session: AsyncSession = Depends(get_meta_db),
+        session: AsyncSession = Depends(get_meta_db_dep),
 ) -> list[RevertLogSchema]:
     result = await session.execute(
-        select(RevertLog)
-        .where(RevertLog.backup_log_id == backup_id)
-        .order_by(RevertLog.reverted_at.desc())
+        select(RevertLogEntity)
+        .where(RevertLogEntity.backup_log_id == backup_id)
+        .order_by(RevertLogEntity.reverted_at.desc())
     )
     logs = result.scalars().all()
     return [RevertLogSchema.model_validate(log) for log in logs]
@@ -209,7 +216,7 @@ async def list_revert_logs_for_backup(
 )
 async def delete_backup_endpoint(
         backup_id: int,
-        meta_session: AsyncSession = Depends(get_meta_db),
+        meta_session: AsyncSession = Depends(get_meta_db_dep),
 ):
     try:
         result = await BackupService(meta_session=meta_session).delete_backup(

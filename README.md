@@ -113,6 +113,33 @@ sudo chown $USER:$USER /backups
 
 ---
 
+
+## 🗄️ Database Migrations (Alembic)
+
+Database migrations are managed by Alembic. Always run these commands from the `src` directory.
+
+```bash
+cd src
+```
+- **Run all pending migrations:**
+  ```bash
+  alembic upgrade head
+  ```
+- **Create a new baseline revision:**
+  ```bash
+  alembic revision -m "baseline_revision"
+  ```
+- **Revert the last migration:**
+  ```bash
+  alembic downgrade -1
+  ```
+- **Auto-generate a new migration (after modifying models):**
+  ```bash
+  alembic revision --autogenerate -m "Added account table"
+  ```
+  *⚠️ **Note:** Remember to import your new entities/models into `database/run_migrations.py` and `database/migrations/env.py` before auto-generating migrations.*
+
+---
 ### Production
 
 ```bash
@@ -163,12 +190,12 @@ Add this line:
 0 0 * * * curl -s -X POST http://localhost:8000/backup/create \
   -H "Content-Type: application/json" \
   -d '{"notes": "nightly auto backup", "created_by": "cron"}' \
-  >> /var/log/lms_backup.log 2>&1
+  >> /var/log/db_backup.log 2>&1
 ```
 
 ### Option B — Systemd Timer (recommended for production)
 
-Create `/etc/systemd/system/lms-backup.service`:
+Create `/etc/systemd/system/db-backup.service`:
 
 ```ini
 [Unit]
@@ -185,7 +212,7 @@ StandardOutput=append:/var/log/lms_backup.log
 StandardError=append:/var/log/lms_backup.log
 ```
 
-Create `/etc/systemd/system/lms-backup.timer`:
+Create `/etc/systemd/system/db-backup.timer`:
 
 ```ini
 [Unit]
